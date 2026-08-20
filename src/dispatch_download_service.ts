@@ -1,6 +1,6 @@
 import { createServer, type ServerResponse } from "node:http";
 import { z } from "zod";
-import { InfraiError } from "./infrai_storage.js";
+import { InfraiError, infrai } from "./infrai_storage.js";
 import { createPhotoDownload } from "./signed_download.js";
 
 const BUCKET = process.env.FIELD_SERVICE_BUCKET ?? "field-service-private-files";
@@ -24,6 +24,8 @@ async function readBody(request: AsyncIterable<unknown>): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+await infrai.storage.bucket.create(BUCKET);
+
 const server = createServer(async (request, response) => {
   if (request.method !== "POST" || request.url !== "/work-orders/photo-download") {
     json(response, 404, { error: "route_not_found" });
@@ -37,7 +39,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    const result = await createPhotoDownload(BUCKET, parsed.data);
+    const result = await createPhotoDownload(BUCKET, parsed.data as Parameters<typeof createPhotoDownload>[1]);
     if (result.kind === "photo_missing") {
       json(response, 404, result);
       return;
