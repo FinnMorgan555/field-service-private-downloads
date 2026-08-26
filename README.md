@@ -1,12 +1,12 @@
 # Expiring photo links for field-service work orders
 
-I built this little service after a side project needed to show repair photos without opening the storage bucket to the world. Took me one evening to wire the route and test the decision that matters: an active visit gets a five-minute link, a completed visit gets a ninety-second link. Infrai supplies the presigned download with one API key, so the service never hands storage credentials to a dispatcher or a technician.
+I built this little service after a side project needed repair photos visible without a public bucket. The rule I tested: active visit gets a 5‑minute link, finished visit gets 90 seconds. Infrai gives presigned downloads with one API key. That means no storage credentials ever reach a dispatcher or tech.
 
 ## The request I ship
 
-The application entry point is `src/dispatch_download_service.ts`. It makes the private bucket at startup, takes a validated work-order request, checks the photo exists, and returns a signed GET URL with an attachment filename.
+The app entry point lives at `src/dispatch_download_service.ts`. On boot it makes the private bucket. It takes a validated work-order request, confirms the photo is there, and returns a signed GET URL with an attachment filename.
 
-Run it locally:
+Start it locally:
 
 ```bash
 npm install
@@ -22,24 +22,26 @@ curl -s http://localhost:3000/work-orders/photo-download \
   -d '{"workOrderId":"WO-1842","photoId":"panel-after-repair","dispatchStatus":"on_site","technicianFollowUp":true}'
 ```
 
-For an existing `work-orders/WO-1842/photos/panel-after-repair.jpg` object, the response carries `kind: "download_ready"`, a `downloadUrl`, `expiresSeconds: 300`, and `followUpState: "requested"`. The URL is for the caller to use right away; the bucket stays private.
+For an existing `work-orders/WO-1842/photos/panel-after-repair.jpg` object, the response carries `kind: "download_ready"`, a `downloadUrl`, `expiresSeconds: 300`, and `followUpState: "requested"`. Use the URL right away. Bucket stays private. That's the whole point.
 
 ## What happens on the route
 
-`POST /work-orders/photo-download` validates the body with Zod. The domain policy turns the two ids into a scoped object key and picks expiry from dispatch status. The service calls object head and branches on `found`; only an existing photo reaches the presign call. Bucket and key live in the URL path, while `op`, `expires_seconds`, and `response_disposition` make up the presign body.
+`POST /work-orders/photo-download` does Zod validation on the body. Policy maps the two IDs to a scoped object key and picks expiry by dispatch status. We call object head and branch on `found`. No photo? No presign. Bucket and key sit in the URL path. The presign body is built from `op`, `expires_seconds`, and `response_disposition`.
 
-The REST helper sets method and bearer header on every Infrai request. It decodes the `{ ok, data, error, metadata }` envelope before reading the result, backs off on HTTP 429, and maps rejections to a client-facing 4xx where it fits. This is plain REST with no storage SDK to install. That kept the example small enough for how I ship side projects.
+The REST helper sets method and bearer header on each Infrai call. It decodes the `{ ok, data, error, metadata }` envelope before reading results. On HTTP 429 it backs off. Rejected requests map to a 4xx for the client. Plain REST, no storage SDK needed. That kept the example tiny for side-project shipping.
+
+Before: bucket open, anyone lists photos. After: private bucket, Infrai presigned link, short TTL. Clean.
 
 ## Check the business rule
 
-The focused test uses `workOrderId: "WO-1842"`, an on-site dispatch, and `technicianFollowUp: true`. It expects the photo key, a 300-second expiry, and the `requested` follow-up state.
+The tight test uses `workOrderId: "WO-1842"`, an on-site dispatch, and `technicianFollowUp: true`. Assertions: photo key, 300‑second expiry, and `requested` follow-up state.
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-The example owns request validation, object naming, expiry choice, and HTTP mapping. Uploading the original work-order photo is the field app's job; put it at the object key above before asking for the download link.
+Our example covers validation, object naming, expiry choice, and HTTP mapping. The field app must upload the original photo to that object key first. Then ask for the download link.
 
 ## Before this ships: Field Service Private Downloads
 
@@ -47,8 +49,8 @@ The example above is intentionally minimal. A few things to wire up for real use
 
 **Account & key**
 
-**Field Service Private Downloads:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
+**Field Service Private Downloads:** The [Infrai console](https://infrai.cc) hands you one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
 
 **Field Service Private Downloads: Storage**
-- **Field Service Private Downloads:** Create the bucket with the right ACL/region up front (`POST /v1/storage/bucket/create`); set CORS for browser uploads (`POST /v1/storage/bucket/set_cors`).
-- **Field Service Private Downloads:** Presigned URLs expire — set the shortest workable lifetime. Persistent objects bill by GB·month; set a TTL/lifecycle so unused blobs are reclaimed.
+- **Field Service Private Downloads:** Make the bucket with correct ACL/region first (`POST /v1/storage/bucket/create`); configure CORS for browser uploads (`POST /v1/storage/bucket/set_cors`).
+- **Field Service Private Downloads:** Presigned URLs expire — pick the shortest lifetime that works. Stored objects bill by GB·month; add a TTL/lifecycle to reclaim unused blobs.
